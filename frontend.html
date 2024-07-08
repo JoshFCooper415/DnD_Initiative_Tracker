@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Initiative Tracker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .left-panel, .right-panel {
+            flex: 1;
+        }
+        .color-box {
+            width: 20px;
+            height: 20px;
+            display: inline-block;
+            margin-right: 10px;
+            border: 1px solid #000;
+        }
+        ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        li {
+            margin-bottom: 5px;
+            padding: 5px;
+            background-color: #f0f0f0;
+            border-radius: 3px;
+        }
+        .current-turn {
+            font-weight: bold;
+            background-color: #e0e0e0;
+        }
+        .npc-marker {
+            font-style: italic;
+            margin-left: 5px;
+        }
+        #npcForm {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #ccc;
+        }
+        form {
+            margin-bottom: 20px;
+        }
+        input, button {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Initiative Tracker</h1>
+    <div class="container">
+        <div class="left-panel">
+            <h2>Initiative Order</h2>
+            <ul id="initiativeList"></ul>
+            <form id="initiativeForm">
+                <input type="text" id="name" placeholder="Name" required>
+                <input type="number" id="initiative" placeholder="Initiative" required>
+                <button type="submit">Add Player Character</button>
+            </form>
+            <form id="npcForm" style="display: none;">
+                <input type="text" id="npcName" placeholder="NPC Name" required>
+                <input type="number" id="npcInitiative" placeholder="NPC Initiative" required>
+                <button type="submit">Add NPC</button>
+            </form>
+            <button id="nextTurnBtn">Next Turn</button>
+        </div>
+        <div class="right-panel">
+            <h2>Connected Devices</h2>
+            <ul id="deviceList"></ul>
+            <div id="deviceColor"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000/api';
+        const initiativeForm = document.getElementById('initiativeForm');
+        const npcForm = document.getElementById('npcForm');
+        const nameInput = document.getElementById('name');
+        const initiativeInput = document.getElementById('initiative');
+        const npcNameInput = document.getElementById('npcName');
+        const npcInitiativeInput = document.getElementById('npcInitiative');
+        const initiativeList = document.getElementById('initiativeList');
+        const deviceList = document.getElementById('deviceList');
+        const deviceColor = document.getElementById('deviceColor');
+        const nextTurnBtn = document.getElementById('nextTurnBtn');
+
+        let initiatives = [];
+        let connectedDevices = {};
+        let myColor = null;
+        let myDeviceId = null;
+        let isHost = false;
+        let currentTurnColor = null;
+        let hostColor = null;
+
+        async function connectDevice() {
+          try {
+              const response = await fetch(`${API_URL}/connect`);
+              if (response.ok) {
+                  const data = await response.json();
+                  myDeviceId = data.device_id;
+                  myColor = data.color;
+                  isHost = data.isHost;
+                  deviceColor.innerHTML = `<div class="color-box" style="background-color: ${myColor};"></div>Your device color: ${myColor}${isHost ? ' (Host)' : ''}`;
+                  npcForm.style.display = isHost ? 'block' : 'none';
+                  if (isHost) {
+                      hostColor = myColor;
+                  }
+                  // Store the full device information
+                  connectedDevices[myDeviceId] = {
+                      color: myColor,
+                      isHost: isHost
+                  };
+                  fetchInitiatives();
+                  updateConnectedDevices();
+              }
+          } catch (error) {
+              console.error('Failed to connect device:', error);
+          }
+      }
+
+        async function fetchInitiatives() {
+            try {
+                const response = await fetch(`${API_URL}/initiatives`);
+                if (response.ok) {
+                    initiatives = await response.json();
+                    updateInitiativeList();
+                }
+            } catch (error) {
+                console.error('Failed to fetch initiatives:', error);
+            }
+        }
+
+        let currentTurnId = null;
+
+        async function addInitiative(name, initiative, isNPC = false) {
+            let color;
+            if (isNPC) {
+                color = hostColor;
+            } else {
+                // Find the first non-host device color
+                const nonHostDevice = Object.values(connectedDevices).find(device => !device.isHost);
+                color = nonHostDevice ? nonHostDevice.color : myColor;
+            }
+        
+            const newInitiative = { 
+                name, 
+                initiative: parseInt(initiative, 10), 
+                color: color,
+                isNPC 
+            };
+            try {
+                const response = await fetch(`${API_URL}/${isNPC ? 'npcs' : 'initiatives'}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(newInitiative),
+                });
+                if (response.ok) {
+                    fetchInitiatives();
+                }
+            } catch (error) {
+                console.error('Failed to add initiative to server:', error);
+            }
+        }
+        
+        async function getCurrentTurn() {
+            try {
+                const response = await fetch(`${API_URL}/current-turn`);
+                if (response.ok) {
+                    const data = await response.json();
+                    currentTurnColor = data.color;
+                    currentTurnId = data.id;
+                    updateInitiativeList();
+                }
+            } catch (error) {
+                console.error('Failed to get current turn:', error);
+            }
+        }
+        
+        function updateInitiativeList() {
+            initiativeList.innerHTML = '';
+            initiatives.forEach((item) => {
+                const li = document.createElement('li');
+                li.className = item.id === currentTurnId ? 'current-turn' : '';
+                li.innerHTML = `
+                    <div class="color-box" style="background-color: ${item.color};"></div>
+                    <span>${item.name} (${item.initiative})</span>
+                    ${item.isNPC ? '<span class="npc-marker">(NPC)</span>' : ''}
+                    ${item.id === currentTurnId ? '<span class="current-turn-marker">Current Turn</span>' : ''}
+                    <button class="delete-btn" data-id="${item.id}">Delete</button>
+                `;
+                initiativeList.appendChild(li);
+            });
+        }
+        
+        async function nextTurn() {
+            try {
+                const response = await fetch(`${API_URL}/current-turn`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ id: currentTurnId }),
+                });
+                if (response.ok) {
+                    getCurrentTurn();
+                }
+            } catch (error) {
+                console.error('Failed to update turn:', error);
+            }
+        }
+
+        async function deleteInitiative(id) {
+            try {
+                const response = await fetch(`${API_URL}/initiatives/${id}`, {
+                    method: 'DELETE',
+                });
+                if (response.ok) {
+                    fetchInitiatives();
+                }
+            } catch (error) {
+                console.error('Failed to delete initiative:', error);
+            }
+        }
+
+        async function updateConnectedDevices() {
+            try {
+                const response = await fetch(`${API_URL}/devices`);
+                if (response.ok) {
+                    connectedDevices = await response.json();
+                    updateDeviceList();
+                }
+            } catch (error) {
+                console.error('Failed to get connected devices:', error);
+            }
+        }
+
+        function updateDeviceList() {
+            deviceList.innerHTML = '';
+            Object.entries(connectedDevices).forEach(([id, data]) => {
+                const li = document.createElement('li');
+                li.innerHTML = `
+                    <div class="color-box" style="background-color: ${data.color};"></div>
+                    ${id === myDeviceId ? 'You' : 'Player'} ${id === myDeviceId && isHost ? '(Host)' : ''}
+                `;
+                deviceList.appendChild(li);
+            });
+        }
+
+        initiativeForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const name = nameInput.value;
+            const initiative = initiativeInput.value;
+            await addInitiative(name, initiative);
+            initiativeForm.reset();
+        });
+
+        npcForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const name = npcNameInput.value;
+            const initiative = npcInitiativeInput.value;
+            await addInitiative(name, initiative, true);
+            npcForm.reset();
+        });
+
+        initiativeList.addEventListener('click', async function(e) {
+            if (e.target.classList.contains('delete-btn')) {
+                const id = e.target.getAttribute('data-id');
+                await deleteInitiative(id);
+            }
+        });
+
+        nextTurnBtn.addEventListener('click', nextTurn);
+
+        // Connect device when page loads
+        connectDevice();
+
+        // Periodically update connected devices and current turn
+        setInterval(() => {
+            updateConnectedDevices();
+            getCurrentTurn();
+        }, 5000);
+
+        // Disconnect device when page is closed
+        window.addEventListener('beforeunload', async () => {
+            if (myDeviceId) {
+                try {
+                    await fetch(`${API_URL}/disconnect/${myDeviceId}`, { method: 'POST' });
+                } catch (error) {
+                    console.error('Failed to disconnect device:', error);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
